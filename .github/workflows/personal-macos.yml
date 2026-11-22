@@ -1,0 +1,48 @@
+name: Local desktop DMG
+on:
+  push:
+    branches: [builds/macos-arm64-0.17.2]
+    paths: [.github/workflows/personal-macos.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: getpaseo/paseo
+          ref: b2ca56ee73cb039d65ef23bc3b4bf17f7a650fa0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: |
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = b2ca56ee73cb039d65ef23bc3b4bf17f7a650fa0
+          npm ci --no-audit
+      - name: Package ad-hoc signed application
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm run build:desktop -- --publish never --mac dmg --arm64 -c.mac.identity=- -c.mac.notarize=false
+      - name: Verify disk image and launch the packaged application
+        run: |
+          dmg=packages/desktop/release/Paseo-0.17.2-arm64.dmg
+          hdiutil verify "$dmg"
+          mount_dir=$(mktemp -d)
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          app="$RUNNER_TEMP/Paseo.app"
+          ditto "$mount_dir/Paseo.app" "$app"
+          codesign --verify --deep --strict "$app"
+          node -e 'require("./packages/desktop/e2e/packaged-app-smoke.js").smokePackagedDesktopApp({appPath:process.argv[1]}).catch(e=>{console.error(e);process.exitCode=1})' "$app"
+          cd packages/desktop/release
+          shasum -a 256 Paseo-0.17.2-arm64.dmg > Paseo-0.17.2-arm64.dmg.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: paseo-desktop-0.17.2-arm64
+          path: packages/desktop/release/Paseo-0.17.2-arm64.dmg*
+          if-no-files-found: error
+          retention-days: 7

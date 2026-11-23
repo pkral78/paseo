@@ -1,0 +1,85 @@
+name: Personal desktop DMG
+
+# Builds this fork's own tree, so lockfile fixes and Dependabot merges reach the DMG.
+on:
+  push:
+    branches: ["personal/**"]
+    paths-ignore: ["**/*.md", "docs/**", "public-docs/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: personal-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          npm ci --no-audit --no-fund
+
+      - name: Verify dependency signatures
+        run: npm audit signatures
+
+      - name: Package ad-hoc signed application
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        # hardenedRuntime=false: an ad-hoc signature has no Team ID, so library validation
+        # refuses Electron Framework and dyld kills the app at launch on a normal Mac.
+        # publish.owner: the updater must not fetch upstream's Developer ID builds; an ad-hoc
+        # app cannot install them.
+        run: >-
+          npm run build:desktop -- --publish never --mac dmg --arm64
+          -c.mac.identity=-
+          -c.mac.hardenedRuntime=false
+          -c.mac.notarize=false
+          -c.publish.owner=${{ github.repository_owner }}
+          -c.publish.repo=${{ github.event.repository.name }}
+
+      - name: Check protocol validators against the installed zod
+        run: npm run test --workspace=@getpaseo/protocol
+
+      - name: Verify disk image and launch the packaged application
+        run: |
+          version=$(node -p 'require("./packages/desktop/package.json").version')
+          dmg="packages/desktop/release/Paseo-$version-arm64.dmg"
+          hdiutil verify "$dmg"
+          mount_dir=$(mktemp -d)
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          app="$RUNNER_TEMP/Paseo.app"
+          ditto "$mount_dir/Paseo.app" "$app"
+          codesign --verify --deep --strict "$app"
+          # Hosted runners do not enforce library validation, so the launch below passes
+          # even with the hardened runtime on. Assert the signature flags instead.
+          flags=$(codesign -dv "$app" 2>&1 | grep '^CodeDirectory')
+          echo "$flags"
+          case "$flags" in *adhoc*runtime*|*runtime*adhoc*) echo "::error::hardened runtime is still enabled"; exit 1 ;; esac
+          case "$flags" in *adhoc*) ;; *) echo "::error::expected an ad-hoc signature"; exit 1 ;; esac
+          grep -q "owner: ${{ github.repository_owner }}" "$app/Contents/Resources/app-update.yml"
+          node .github/scripts/audit-shipped.cjs "$app"
+          node -e 'require("./packages/desktop/e2e/packaged-app-smoke.js").smokePackagedDesktopApp({appPath:process.argv[1]}).catch(e=>{console.error(e);process.exitCode=1})' "$app"
+          cd packages/desktop/release
+          shasum -a 256 "Paseo-$version-arm64.dmg" > "Paseo-$version-arm64.dmg.sha256"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paseo-desktop-arm64
+          path: packages/desktop/release/Paseo-*-arm64.dmg*
+          if-no-files-found: error
+          retention-days: 14

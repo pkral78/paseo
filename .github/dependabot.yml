@@ -1,0 +1,14 @@
+# Security updates only. A limit of 0 turns scheduled version bumps off and still lets
+# Dependabot open pull requests for advisories; routine bumps arrive by rebasing on upstream.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 0
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

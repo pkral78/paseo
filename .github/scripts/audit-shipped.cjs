@@ -7,12 +7,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const semver = require("semver");
 
-// Advisories that only a semver-major upgrade fixes. Remove an entry once upstream upgrades.
+// Accepted by advisory, so a new advisory against the same package still blocks.
+// Remove an entry once upstream upgrades.
 const ACCEPTED = {
-  "markdown-it": "fix needs markdown-it 15 (major); quadratic-time parsing of hostile Markdown",
-  "linkify-it": "pulled in by markdown-it 10; same upgrade",
-  zod: "4.6 changes schema type inference and packages/client stops compiling; memory DoS on oversized input",
+  "GHSA-r7fv-28h4-cvq7": "markdown-it: fix needs markdown-it 15 (major)",
+  "GHSA-22p9-wv53-3rq4": "linkify-it: pulled in by markdown-it 10; same upgrade",
+  "GHSA-v245-v573-v5vm": "linkify-it: pulled in by markdown-it 10; same upgrade",
+  "GHSA-mrhx-c7xc-m3w5": "zod: 4.6 changes inferred schema types and packages/client stops compiling",
 };
+const accepted = (advisory) => ACCEPTED[advisory.url.split("/").pop()];
 const BLOCKING = new Set(["high", "critical"]);
 
 const appPath = process.argv[2];
@@ -67,6 +70,8 @@ function readDiskPackages(dir) {
 readAsarPackages(path.join(resources, "app.asar"));
 readDiskPackages(path.join(resources, "app.asar.unpacked"));
 if (shipped.size === 0) throw new Error(`No packages found in ${resources}`);
+// Electron is the runtime, not a package in the asar.
+record("electron", require("electron/package.json").version);
 
 // npm audit exits non-zero whenever it finds anything, so only the JSON matters.
 const audit = spawnSync("npm", ["audit", "--json"], { encoding: "utf8", maxBuffer: 1 << 28 });
@@ -85,7 +90,7 @@ for (const vulnerability of Object.values(report.vulnerabilities)) {
 }
 
 const rows = [...findings.values()].sort((a, b) => a.name.localeCompare(b.name));
-const blocking = rows.filter((row) => BLOCKING.has(row.severity) && !ACCEPTED[row.name]);
+const blocking = rows.filter((row) => BLOCKING.has(row.severity) && !accepted(row));
 const lines = [
   `### Advisories in the packaged app (${shipped.size} packages checked)`,
   "",
@@ -93,7 +98,7 @@ const lines = [
   "| --- | --- | --- | --- |",
   ...rows.map((row) => {
     let status = "reported";
-    if (ACCEPTED[row.name]) status = `accepted: ${ACCEPTED[row.name]}`;
+    if (accepted(row)) status = `accepted: ${accepted(row)}`;
     else if (BLOCKING.has(row.severity)) status = "**blocks the build**";
     return `| ${row.name}@${row.version} | ${row.severity} | [${row.title}](${row.url}) | ${status} |`;
   }),

@@ -7,6 +7,11 @@ updates:
     schedule:
       interval: daily
     open-pull-requests-limit: 0
+    ignore:
+      # 4.6 changes inferred schema types; packages/client stops compiling.
+      - dependency-name: zod
+      # 5.0.292 pulls in undici 5, which has advisories of its own.
+      - dependency-name: ai
   - package-ecosystem: github-actions
     directory: /
     schedule:

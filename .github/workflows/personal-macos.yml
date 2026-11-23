@@ -5,6 +5,15 @@ on:
   push:
     branches: ["personal/**"]
     paths-ignore: ["**/*.md", "docs/**", "public-docs/**"]
+  # Dependabot security pull requests get a full package build before merge.
+  pull_request:
+    branches: ["personal/**"]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "packages/*/package.json"
+      - ".github/workflows/personal-macos.yml"
+      - ".github/scripts/audit-shipped.cjs"
   workflow_dispatch:
 
 concurrency:

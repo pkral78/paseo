@@ -11,6 +11,7 @@ const semver = require("semver");
 const ACCEPTED = {
   "markdown-it": "fix needs markdown-it 15 (major); quadratic-time parsing of hostile Markdown",
   "linkify-it": "pulled in by markdown-it 10; same upgrade",
+  zod: "4.6 changes schema type inference and packages/client stops compiling; memory DoS on oversized input",
 };
 const BLOCKING = new Set(["high", "critical"]);
 

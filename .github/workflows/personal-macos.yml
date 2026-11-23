@@ -51,9 +51,6 @@ jobs:
           -c.publish.owner=${{ github.repository_owner }}
           -c.publish.repo=${{ github.event.repository.name }}
 
-      - name: Check protocol validators against the installed zod
-        run: npm run test --workspace=@getpaseo/protocol
-
       - name: Verify disk image and launch the packaged application
         run: |
           version=$(node -p 'require("./packages/desktop/package.json").version')

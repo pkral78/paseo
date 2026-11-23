@@ -29,6 +29,8 @@ To move to a new upstream release, rebase `personal/desktop` onto the tag and pu
 
 `.github/scripts/audit-shipped.cjs` fails the build on a high or critical advisory in a package packed into the app. `npm audit` cannot gate the build: it also counts the website, Expo tooling and test runners. The script cannot see packages Metro bundles into the web UI.
 
+Every build reports the advisories it still carries, highest severity first: in the run's step summary and as `Paseo-<version>-arm64.advisories.md` in the artifact next to the DMG. When you produce or install a build, read that file and tell the user the highest remaining advisories. Do not call a build clean because the gate passed; the gate only blocks high and critical advisories that nobody accepted.
+
 Accepted advisories are listed by GHSA id in that script, each with its reason. Two constraints behind them:
 
 - `zod` stays on 4.4.x. 4.6 changes inferred schema types and `packages/client` stops compiling.

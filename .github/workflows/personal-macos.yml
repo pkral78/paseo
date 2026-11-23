@@ -78,7 +78,7 @@ jobs:
           case "$flags" in *adhoc*runtime*|*runtime*adhoc*) echo "::error::hardened runtime is still enabled"; exit 1 ;; esac
           case "$flags" in *adhoc*) ;; *) echo "::error::expected an ad-hoc signature"; exit 1 ;; esac
           grep -q "owner: ${{ github.repository_owner }}" "$app/Contents/Resources/app-update.yml"
-          node .github/scripts/audit-shipped.cjs "$app"
+          node .github/scripts/audit-shipped.cjs "$app" "packages/desktop/release/Paseo-$version-arm64.advisories.md"
           node -e 'require("./packages/desktop/e2e/packaged-app-smoke.js").smokePackagedDesktopApp({appPath:process.argv[1]}).catch(e=>{console.error(e);process.exitCode=1})' "$app"
           cd packages/desktop/release
           shasum -a 256 "Paseo-$version-arm64.dmg" > "Paseo-$version-arm64.dmg.sha256"
@@ -86,6 +86,8 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: paseo-desktop-arm64
-          path: packages/desktop/release/Paseo-*-arm64.dmg*
+          path: |
+            packages/desktop/release/Paseo-*-arm64.dmg*
+            packages/desktop/release/Paseo-*-arm64.advisories.md
           if-no-files-found: error
           retention-days: 14

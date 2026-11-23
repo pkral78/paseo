@@ -19,7 +19,7 @@ const accepted = (advisory) => ACCEPTED[advisory.url.split("/").pop()];
 const BLOCKING = new Set(["high", "critical"]);
 
 const appPath = process.argv[2];
-if (!appPath) throw new Error("usage: audit-shipped.cjs <path to Paseo.app>");
+if (!appPath) throw new Error("usage: audit-shipped.cjs <path to Paseo.app> [report.md]");
 const resources = path.join(appPath, "Contents", "Resources");
 
 const shipped = new Map();
@@ -71,14 +71,21 @@ readAsarPackages(path.join(resources, "app.asar"));
 readDiskPackages(path.join(resources, "app.asar.unpacked"));
 if (shipped.size === 0) throw new Error(`No packages found in ${resources}`);
 // Electron is the runtime, not a package in the asar.
-record("electron", require("electron/package.json").version);
+const electronVersion = require("electron/package.json").version;
+record("electron", electronVersion);
 
 // npm audit exits non-zero whenever it finds anything, so only the JSON matters.
 const audit = spawnSync("npm", ["audit", "--json"], { encoding: "utf8", maxBuffer: 1 << 28 });
 const report = JSON.parse(audit.stdout);
 if (!report.vulnerabilities) throw new Error(`npm audit returned no report: ${audit.stdout.slice(0, 400)}`);
 
+// Metro bundles these into Resources/app-dist without package metadata, so the app cannot be
+// inspected for them. Their lockfile versions are reported instead and never block.
+const WEB_BUNDLE = ["mermaid", "katex", "dompurify", "expo-router", "query-string", "decode-uri-component", "@react-navigation/core"];
+const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8")).packages;
+
 const findings = new Map();
+const webFindings = new Map();
 for (const vulnerability of Object.values(report.vulnerabilities)) {
   for (const advisory of vulnerability.via) {
     if (typeof advisory !== "object") continue;
@@ -86,29 +93,58 @@ for (const vulnerability of Object.values(report.vulnerabilities)) {
       if (!semver.satisfies(version, advisory.range, { includePrerelease: true })) continue;
       findings.set(`${advisory.name}@${version} ${advisory.url}`, { ...advisory, version });
     }
+    const locked = WEB_BUNDLE.includes(advisory.name) && lock[`node_modules/${advisory.name}`]?.version;
+    if (locked && semver.satisfies(locked, advisory.range, { includePrerelease: true })) {
+      webFindings.set(`${advisory.name} ${advisory.url}`, { ...advisory, version: locked });
+    }
   }
 }
 
-const rows = [...findings.values()].sort((a, b) => a.name.localeCompare(b.name));
+const RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
+const bySeverity = (a, b) =>
+  (RANK[b.severity] ?? 0) - (RANK[a.severity] ?? 0) || (b.cvss?.score ?? 0) - (a.cvss?.score ?? 0) || a.name.localeCompare(b.name);
+const rows = [...findings.values()].sort(bySeverity);
+const webRows = [...webFindings.values()].sort(bySeverity);
 const blocking = rows.filter((row) => BLOCKING.has(row.severity) && !accepted(row));
+
+function table(list, statusOf) {
+  if (list.length === 0) return ["None."];
+  return [
+    "| Package | Severity | CVSS | Advisory | Status |",
+    "| --- | --- | --- | --- | --- |",
+    ...list.map(
+      (row) =>
+        `| ${row.name}@${row.version} | ${row.severity} | ${row.cvss?.score || "n/a"} | [${row.title}](${row.url}) | ${statusOf(row)} |`,
+    ),
+  ];
+}
+
+const counts = Object.keys(RANK)
+  .map((severity) => `${rows.filter((row) => row.severity === severity).length} ${severity}`)
+  .join(", ");
 const lines = [
-  `### Advisories in the packaged app (${shipped.size} packages checked)`,
+  "## Known advisories in this build",
   "",
-  "| Package | Severity | Advisory | Status |",
-  "| --- | --- | --- | --- |",
-  ...rows.map((row) => {
-    let status = "reported";
-    if (accepted(row)) status = `accepted: ${accepted(row)}`;
-    else if (BLOCKING.has(row.severity)) status = "**blocks the build**";
-    return `| ${row.name}@${row.version} | ${row.severity} | [${row.title}](${row.url}) | ${status} |`;
+  `Electron ${electronVersion}. ${shipped.size} packed packages checked: ${counts}.`,
+  "",
+  "### Packed into the app",
+  "",
+  ...table(rows, (row) => {
+    if (accepted(row)) return `accepted: ${accepted(row)}`;
+    return BLOCKING.has(row.severity) ? "**blocks the build**" : "reported";
   }),
-  rows.length === 0 ? "| none | | | |" : "",
+  "",
+  "### Web UI bundle (lockfile versions, not verifiable from the app)",
+  "",
+  ...table(webRows, () => "reported"),
 ];
 const summary = lines.join("\n");
 console.log(summary);
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
+// The report ships next to the DMG so whoever installs the build sees what it still carries.
+if (process.argv[3]) fs.writeFileSync(process.argv[3], `${summary}\n`);
 
 if (blocking.length > 0) {
-  console.error(`\n${blocking.length} high or critical advisories ship in the app. Bump the package or add it to ACCEPTED with a reason.`);
+  console.error(`\n${blocking.length} high or critical advisories ship in the app. Bump the package or add the advisory to ACCEPTED with a reason.`);
   process.exit(1);
 }
